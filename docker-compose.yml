@@ -1,0 +1,23 @@
+# OPTIONAL alternative to Homebrew services. Use either this OR scripts/dev-up.sh, not both (same ports).
+# Roles/vhost are created by scripts/dev-up.sh for the native setup; here they are set via env.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: remittance
+      POSTGRES_USER: remit_migrator
+      POSTGRES_PASSWORD: remit_mig_dev_pw
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data", "./infra/pg-init:/docker-entrypoint-initdb.d:ro"]
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: remit
+      RABBITMQ_DEFAULT_PASS: remit_dev_pw
+      RABBITMQ_DEFAULT_VHOST: remit
+    ports: ["5672:5672", "15672:15672"]
+  valkey:
+    image: valkey/valkey:7.2
+    ports: ["6379:6379"]
+volumes:
+  pgdata:

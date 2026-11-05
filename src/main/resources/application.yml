@@ -1,0 +1,25 @@
+spring:
+  application.name: remittance
+  profiles.active: onprem
+  datasource:
+    url: jdbc:postgresql://localhost:5432/remittance
+    username: remit_app
+    password: ${DB_PASSWORD:remit_dev_pw}
+  flyway:
+    enabled: true
+    user: remit_migrator
+    password: ${DB_MIGRATOR_PASSWORD:remit_mig_dev_pw}
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: remit
+    password: ${MQ_PASSWORD:remit_dev_pw}
+    virtual-host: remit
+  data.redis:
+    host: localhost
+    port: 6379
+management:
+  endpoints.web.exposure.include: health,info,prometheus
+server:
+  port: 8080
+  error.include-message: never

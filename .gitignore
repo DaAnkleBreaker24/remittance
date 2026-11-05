@@ -1,0 +1,32 @@
+target/
+.idea/
+*.iml
+.env
+.dev/
+*.log
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.iml
+
+# Local env
+.env
+.env.*
+.dev/
+
+# Logs
+*.log
+
+# Build
+target/
+.classpath
+.project
+.settings/
+
+# Claude/IDE
+.claude/

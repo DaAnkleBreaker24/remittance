@@ -1,0 +1,3 @@
+CREATE ROLE remit_app LOGIN PASSWORD 'remit_dev_pw';
+REVOKE ALL ON DATABASE remittance FROM PUBLIC;
+GRANT CONNECT ON DATABASE remittance TO remit_app;
