@@ -10,5 +10,6 @@ public record ParameterVersion(
         String approvedBy,
         long version,
         boolean active,
-        Instant effectiveFrom) {
+        Instant effectiveFrom,
+        String reason) {
 }

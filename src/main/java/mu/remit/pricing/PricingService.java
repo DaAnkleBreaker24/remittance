@@ -32,7 +32,7 @@ public class PricingService {
         long fee = calculateFee(sendAmount, scope);
         long commission = calculateCommission(sendAmount, scope);
         long margin = calculateMargin(sendAmount, scope);
-        long tax = calculateTax(fee + commission + margin, scope);
+        long tax = calculateTax(fee, commission, margin, scope);
         long receiveMinor = calculateReceiveAmount(sendAmount, fee, commission, margin, tax, scope);
         double rate = resolveCustomerRate(scope);
 
@@ -70,7 +70,7 @@ public class PricingService {
         long fee = calculateFee(new Money(grossMinor, sendCurrency), scope);
         long commission = calculateCommission(new Money(grossMinor, sendCurrency), scope);
         long margin = calculateMargin(new Money(grossMinor, sendCurrency), scope);
-        long tax = calculateTax(fee + commission + margin, scope);
+        long tax = calculateTax(fee, commission, margin, scope);
         long sendMinor = grossMinor + fee + commission + margin + tax;
 
         return new Quote(
@@ -159,6 +159,34 @@ public class PricingService {
         return new RateValidationCheck(true, source, "Rate source " + source + " is valid.");
     }
 
+    public PromoCodeValidation validatePromoCode(String code, String corridor, String channel, String paymentType,
+            String segment, long usageCount) {
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("promo code is required");
+        }
+
+        String active = findParameter("PROMO:" + code + ":ACTIVE",
+                new ParameterScope(corridor, channel, paymentType, segment), "false");
+        if (!"true".equalsIgnoreCase(active)) {
+            return new PromoCodeValidation(false, 0L, "Promo code " + code + " is not active for this corridor.");
+        }
+
+        String usageLimitValue = findParameter("PROMO:" + code + ":USAGE_LIMIT",
+                new ParameterScope(corridor, channel, paymentType, segment), "0");
+        long usageLimit = parseLong(usageLimitValue);
+        if (usageCount >= usageLimit) {
+            return new PromoCodeValidation(false, 0L, "Promo code " + code + " has reached its usage limit.");
+        }
+
+        String discountRate = findParameter("PROMO:" + code + ":DISCOUNT_RATE",
+                new ParameterScope(corridor, channel, paymentType, segment), "0");
+        String maxDiscount = findParameter("PROMO:" + code + ":MAX_DISCOUNT",
+                new ParameterScope(corridor, channel, paymentType, segment), "0");
+
+        long discount = Math.min(parseLong(maxDiscount), Math.round(1000L * Double.parseDouble(discountRate)));
+        return new PromoCodeValidation(true, discount, "Promo code " + code + " applied successfully.");
+    }
+
     public ParameterScope getScope(String corridor, String channel, String paymentType, String segment) {
         return new ParameterScope(corridor, channel, paymentType, segment);
     }
@@ -196,11 +224,20 @@ public class PricingService {
         return margin.longValue();
     }
 
-    private long calculateTax(long base, ParameterScope scope) {
+    private long calculateTax(long fee, long commission, long margin, ParameterScope scope) {
         String enabled = parameters.getRequired("TAX_ENABLED", scope);
         if (!"true".equalsIgnoreCase(enabled)) {
             return 0L;
         }
+
+        String taxBase = findParameter("TAX_BASE", scope, "FEE").toUpperCase();
+        long base = switch (taxBase) {
+            case "FEE" -> fee;
+            case "COMMISSION" -> commission;
+            case "MARGIN" -> margin;
+            default -> fee;
+        };
+
         String rateValue = parameters.getRequired("TAX_RATE", scope);
         BigDecimal taxRate = new BigDecimal(rateValue);
         BigDecimal tax = BigDecimal.valueOf(base)

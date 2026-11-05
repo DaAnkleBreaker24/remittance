@@ -30,17 +30,22 @@ public class ParameterRegistry {
         List<ParameterVersion> versions = versionsByKey.computeIfAbsent(key, ignored -> new ArrayList<>());
         long nextVersion = versions.stream().mapToLong(ParameterVersion::version).max().orElse(0L) + 1;
         ParameterVersion version = new ParameterVersion(key, scope, value, createdBy, null, nextVersion, true,
-                Instant.now());
+                Instant.now(), "created");
         versions.add(version);
         cacheByKey.remove(key);
         return version;
     }
 
     public ParameterVersion approve(String key, long version, String approvedBy) {
+        return approve(key, version, approvedBy, "approved");
+    }
+
+    public ParameterVersion approve(String key, long version, String approvedBy, String reason) {
         List<ParameterVersion> versions = versionsByKey.get(key);
         if (versions == null || versions.isEmpty()) {
             throw new IllegalArgumentException("parameter not found: " + key);
         }
+
         ParameterVersion candidate = versions.stream()
                 .filter(v -> v.version() == version)
                 .findFirst()
@@ -60,11 +65,53 @@ public class ParameterRegistry {
                 approvedBy,
                 candidate.version(),
                 true,
-                candidate.effectiveFrom());
+                candidate.effectiveFrom(),
+                reason == null || reason.isBlank() ? "approved" : reason);
         versions.removeIf(v -> v.version() == version);
         versions.add(approved);
         cacheByKey.remove(key);
         return approved;
+    }
+
+    public ParameterVersion rollback(String key, long version, String actor) {
+        return rollback(key, version, actor, "rolled back");
+    }
+
+    public ParameterVersion rollback(String key, long version, String actor, String reason) {
+        List<ParameterVersion> versions = versionsByKey.get(key);
+        if (versions == null || versions.isEmpty()) {
+            throw new IllegalArgumentException("parameter not found: " + key);
+        }
+
+        ParameterVersion candidate = versions.stream()
+                .filter(v -> v.version() == version)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("parameter version not found: " + key + ":" + version));
+        if (actor == null || actor.isBlank()) {
+            throw new IllegalArgumentException("actor is required");
+        }
+
+        ParameterVersion rolledBack = new ParameterVersion(
+                candidate.key(),
+                candidate.scope(),
+                candidate.value(),
+                actor,
+                candidate.approvedBy(),
+                candidate.version(),
+                true,
+                Instant.now(),
+                reason == null || reason.isBlank() ? "rolled back" : reason);
+        versions.removeIf(v -> v.version() == version);
+        versions.add(rolledBack);
+        cacheByKey.remove(key);
+        return rolledBack;
+    }
+
+    public List<ParameterVersion> getAuditTrail(String key) {
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("parameter key is required");
+        }
+        return versionsByKey.getOrDefault(key, List.of());
     }
 
     public String getEffective(String key, ParameterScope scope) {

@@ -137,6 +137,81 @@ class PricingServiceTest {
     }
 
     @Test
+    void paymentMethodPricingUsesPaymentTypeScope() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("FEE_RATE", "GLOBAL", "0.0100"),
+                new ParameterValue("FEE_RATE", "PAYMENT_TYPE:CARD", "0.0200"),
+                new ParameterValue("TAX_ENABLED", "GLOBAL", "false"),
+                new ParameterValue("FX_RATE", "GLOBAL", "1.0000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        Quote quote = pricing.createQuote(
+                "quote-payment-1",
+                "customer-200",
+                new Money(10_000L, "MUR"),
+                "MGA",
+                "BANK",
+                "CARD",
+                "PLATINUM");
+
+        assertThat(quote.feeAmount()).isEqualTo(new Money(200L, "MUR"));
+        assertThat(quote.receiveAmount()).isEqualTo(new Money(9_800L, "MGA"));
+        assertThat(pricing.getScope("MGA", "BANK", "CARD", "PLATINUM").paymentType()).isEqualTo("CARD");
+    }
+
+    @Test
+    void promoCodeChecksValidityAndUsageCapBeforeDiscount() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("PROMO:WELCOME10:ACTIVE", "CORRIDOR:MGA", "true"),
+                new ParameterValue("PROMO:WELCOME10:DISCOUNT_RATE", "CORRIDOR:MGA", "0.1000"),
+                new ParameterValue("PROMO:WELCOME10:USAGE_LIMIT", "CORRIDOR:MGA", "50"),
+                new ParameterValue("PROMO:WELCOME10:MAX_DISCOUNT", "CORRIDOR:MGA", "500"),
+                new ParameterValue("TAX_ENABLED", "GLOBAL", "false"),
+                new ParameterValue("FX_RATE", "GLOBAL", "1.0000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        var valid = pricing.validatePromoCode("WELCOME10", "MGA", "BANK", "CARD", "PLATINUM", 10L);
+        assertThat(valid.allowed()).isTrue();
+        assertThat(valid.discountMinor()).isEqualTo(100L);
+        assertThat(valid.message()).contains("applied");
+
+        var exhausted = pricing.validatePromoCode("WELCOME10", "MGA", "BANK", "CARD", "PLATINUM", 60L);
+        assertThat(exhausted.allowed()).isFalse();
+        assertThat(exhausted.message()).contains("usage");
+    }
+
+    @Test
+    void taxCalculationUsesScopedParametersAndConfiguredBase() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("FEE_RATE", "CORRIDOR:MGA", "0.0100"),
+                new ParameterValue("COMMISSION_RATE", "CORRIDOR:MGA", "0.0025"),
+                new ParameterValue("FX_MARGIN_RATE", "CORRIDOR:MGA", "0.0050"),
+                new ParameterValue("TAX_ENABLED", "CORRIDOR:MGA", "true"),
+                new ParameterValue("TAX_RATE", "CORRIDOR:MGA", "0.1000"),
+                new ParameterValue("TAX_BASE", "CORRIDOR:MGA", "FEE"),
+                new ParameterValue("TAX_INCLUSIVE", "CORRIDOR:MGA", "false"),
+                new ParameterValue("FX_RATE", "CORRIDOR:MGA", "1.0000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        Quote quote = pricing.createQuote(
+                "quote-tax-1",
+                "customer-200",
+                new Money(10_000L, "MUR"),
+                "MGA",
+                "BANK",
+                "WALLET",
+                "PLATINUM");
+
+        assertThat(quote.feeAmount()).isEqualTo(new Money(100L, "MUR"));
+        assertThat(quote.commissionAmount()).isEqualTo(new Money(25L, "MUR"));
+        assertThat(quote.marginAmount()).isEqualTo(new Money(50L, "MUR"));
+        assertThat(quote.taxAmount()).isEqualTo(new Money(10L, "MUR"));
+    }
+
+    @Test
     void rateLockExpiresAndCanBeRefreshed() {
         ParameterizedService parameters = new ParameterizedService(List.of(
                 new ParameterValue("FEE_RATE", "CORRIDOR:MGA", "0.0100"),
