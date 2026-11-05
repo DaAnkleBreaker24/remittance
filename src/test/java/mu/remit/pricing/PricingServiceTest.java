@@ -66,4 +66,111 @@ class PricingServiceTest {
         assertThat(reverse.sendAmount().minor()).isGreaterThan(0L);
         assertThat(reverse.expiresAt()).isAfter(java.time.Instant.now());
     }
+
+    @Test
+    void feeCommissionAndMarginAreCalculatedFromParameters() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("FEE_TYPE", "CORRIDOR:MGA", "PERCENTAGE"),
+                new ParameterValue("FEE_RATE", "CORRIDOR:MGA", "0.0100"),
+                new ParameterValue("FEE_MIN", "CORRIDOR:MGA", "25"),
+                new ParameterValue("FEE_MAX", "CORRIDOR:MGA", "500"),
+                new ParameterValue("COMMISSION_TYPE", "CORRIDOR:MGA", "PERCENTAGE"),
+                new ParameterValue("COMMISSION_RATE", "CORRIDOR:MGA", "0.0025"),
+                new ParameterValue("FX_MARGIN_RATE", "CORRIDOR:MGA", "0.0050"),
+                new ParameterValue("TAX_ENABLED", "CORRIDOR:MGA", "false"),
+                new ParameterValue("FX_RATE", "CORRIDOR:MGA", "1.0000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        Quote quote = pricing.createQuote(
+                "quote-pricing-1",
+                "customer-200",
+                new Money(10_000L, "MUR"),
+                "MGA",
+                "BANK",
+                "WALLET",
+                "PLATINUM");
+
+        assertThat(quote.feeAmount()).isEqualTo(new Money(100L, "MUR"));
+        assertThat(quote.commissionAmount()).isEqualTo(new Money(25L, "MUR"));
+        assertThat(quote.marginAmount()).isEqualTo(new Money(50L, "MUR"));
+        assertThat(quote.customerRate()).isEqualTo(0.995d);
+        assertThat(quote.taxAmount()).isEqualTo(new Money(0L, "MUR"));
+    }
+
+    @Test
+    void preChecksQuoteLimitsAndSuggestsKycUpgradeWhenNeeded() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("DAILY_LIMIT", "SEGMENT:PLATINUM", "2000000"),
+                new ParameterValue("MONTHLY_LIMIT", "SEGMENT:PLATINUM", "5000000"),
+                new ParameterValue("DAILY_LIMIT", "SEGMENT:BASIC", "500000"),
+                new ParameterValue("MONTHLY_LIMIT", "SEGMENT:BASIC", "1000000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        var allowed = pricing.checkQuoteLimits("PLATINUM", 1_000_000L, 500_000L, 2_000_000L);
+        assertThat(allowed.allowed()).isTrue();
+        assertThat(allowed.message()).contains("within");
+
+        var blocked = pricing.checkQuoteLimits("BASIC", 1_000_000L, 400_000L, 800_000L);
+        assertThat(blocked.allowed()).isFalse();
+        assertThat(blocked.message()).contains("KYC upgrade");
+    }
+
+    @Test
+    void staleRatesAreRejectedAndFallbackSourceUsedWhenAvailable() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("RATE_MAX_AGE_SECONDS", "GLOBAL", "30"),
+                new ParameterValue("RATE_SOURCE_FALLBACK", "CORRIDOR:MGA", "market-feed")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        var stale = pricing.validateRate("MGA", "partner-feed", java.time.Instant.now().minusSeconds(90),
+                "market-feed");
+        assertThat(stale.allowed()).isFalse();
+        assertThat(stale.fallbackSource()).isEqualTo("market-feed");
+        assertThat(stale.message()).contains("stale");
+
+        var paused = pricing.validateRate("MGA", "partner-feed", java.time.Instant.now().minusSeconds(90), "");
+        assertThat(paused.allowed()).isFalse();
+        assertThat(paused.message()).contains("paused");
+    }
+
+    @Test
+    void rateLockExpiresAndCanBeRefreshed() {
+        ParameterizedService parameters = new ParameterizedService(List.of(
+                new ParameterValue("FEE_RATE", "CORRIDOR:MGA", "0.0100"),
+                new ParameterValue("TAX_ENABLED", "CORRIDOR:MGA", "true"),
+                new ParameterValue("TAX_RATE", "CORRIDOR:MGA", "0.1000"),
+                new ParameterValue("FX_RATE", "CORRIDOR:MGA", "1.0000")));
+
+        PricingService pricing = new PricingService(parameters);
+
+        Quote quote = pricing.createQuote(
+                "quote-lock-1",
+                "customer-200",
+                new Money(10_000L, "MUR"),
+                "MGA",
+                "BANK",
+                "WALLET",
+                "PLATINUM");
+
+        assertThat(pricing.isQuoteActive(quote)).isTrue();
+
+        Quote expired = new Quote(
+                "quote-lock-2",
+                "customer-200",
+                new Money(10_000L, "MUR"),
+                new Money(100L, "MUR"),
+                new Money(10L, "MUR"),
+                new Money(9_890L, "MGA"),
+                java.time.Instant.now().minusSeconds(5),
+                1.0d);
+
+        assertThat(pricing.isQuoteActive(expired)).isFalse();
+
+        Quote refreshed = pricing.refreshQuote(quote);
+        assertThat(refreshed.expiresAt()).isAfter(quote.expiresAt());
+        assertThat(pricing.isQuoteActive(refreshed)).isTrue();
+    }
 }
